@@ -13,7 +13,7 @@ particular.
 
 Most of the keybindings are based on Vim, but there are some differences.
 
-https://github.com/user-attachments/assets/2e0ebe2d-98a6-447d-8e20-c00aa88fd7ee
+https://github.com/user-attachments/assets/92c021b2-0429-4f8c-a031-a126597ad3bf
 
 ## Features
 
