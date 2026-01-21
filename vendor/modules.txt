@@ -1,0 +1,24 @@
+# github.com/mattn/go-runewidth v0.0.9
+## explicit; go 1.9
+github.com/mattn/go-runewidth
+# github.com/mitjafelicijan/go-tree-sitter v0.0.0-20260118174757-2a036cbea172
+## explicit; go 1.20
+github.com/mitjafelicijan/go-tree-sitter
+github.com/mitjafelicijan/go-tree-sitter/bash
+github.com/mitjafelicijan/go-tree-sitter/c
+github.com/mitjafelicijan/go-tree-sitter/cpp
+github.com/mitjafelicijan/go-tree-sitter/css
+github.com/mitjafelicijan/go-tree-sitter/dockerfile
+github.com/mitjafelicijan/go-tree-sitter/golang
+github.com/mitjafelicijan/go-tree-sitter/html
+github.com/mitjafelicijan/go-tree-sitter/javascript
+github.com/mitjafelicijan/go-tree-sitter/lua
+github.com/mitjafelicijan/go-tree-sitter/markdown/tree-sitter-markdown
+github.com/mitjafelicijan/go-tree-sitter/php
+github.com/mitjafelicijan/go-tree-sitter/python
+github.com/mitjafelicijan/go-tree-sitter/sql
+github.com/mitjafelicijan/go-tree-sitter/typescript/tsx
+github.com/mitjafelicijan/go-tree-sitter/typescript/typescript
+# github.com/nsf/termbox-go v1.1.1
+## explicit; go 1.15
+github.com/nsf/termbox-go

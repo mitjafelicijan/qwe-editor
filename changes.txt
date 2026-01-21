@@ -1,0 +1,35 @@
+## Tree-sitter queries and implementations:
+
+- https://github.com/helix-editor/helix/tree/master/runtime/queries
+
+- [x] bash
+- [x] c
+- [x] cpp
+- [x] golang
+- [x] javascript
+- [x] typescript
+- [x] python
+- [x] css
+- [x] dockerfile
+- [x] html
+- [x] lua
+- [x] php
+- [x] sql
+- [?] markdown
+- [ ] cue
+- [ ] elixir
+- [ ] elm
+- [ ] groovy
+- [ ] hcl
+- [ ] java
+- [ ] kotlin
+- [ ] ocaml
+- [ ] protobuf
+- [ ] ruby
+- [ ] rust
+- [ ] scala
+- [ ] svelte
+- [ ] swift
+- [ ] toml
+- [ ] yaml
+- [ ] csharp

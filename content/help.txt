@@ -1,0 +1,138 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                  QWE EDITOR                                  ║
+║                       Small, opinionated modal text editor                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌── Modes ─────────────────────────────────────────────────────────────────────┐
+│ • Normal       (Navigation)           • Visual       (Text Selection)        │
+│ • Insert       (Type Text)            • Visual Line  (Line Selection)        │
+│ • Command      (Run Commands :)       • Visual Block (Block Selection)       │
+│ • Find / Fuzzy (Search / File nav)                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌── Navigation (Normal) ─────────────┐  ┌── Editing (Normal) ──────────────────┐
+│ Arrows      Move cursor            │  │ i / I     Insert (start/line)        │
+│ w / q       Next / Prev word       │  │ a / A     Append (cursor/line)       │
+│ Q / W       Line Start / End       │  │ o / O     Open new line (below/up)   │
+│ { / }       Top / Bottom of file   │  │ x / D / dd Delete char / EOL / line  │
+│ [ / ]       Prev / Next empty line │  │ y / p / P Yank / Paste               │
+│ Ctrl+O / I  Jump History           │  │ u / U     Undo / Redo                │
+│ Ctrl+N / P  Next / Prev Buffer     │  │ zx / zq   Comment / Format           │
+│ Ctrl+X      Multi-cursor Add       │  │ s / cw    Change char / word         │
+│ zz          Center Screen          │  │ x / D / dd Delete char / EOL / line  │
+└────────────────────────────────────┘  └──────────────────────────────────────┘
+
+┌── Search & Find ───────────────────┐  ┌── Visual Mode ───────────────────────┐
+│ /           Start Search           │  │ v / V / ^V Select (Char/Line/Block)  │
+│ n / N       Next / Prev Result     │  │ y / x / d  Yank / Delete selection   │
+│ Leader+p    Find Files             │  │ c / p      Change / Paste selection  │
+│ Leader+b    Find Buffers           │  │ zx / zq    Comment / Format selection│
+│ Leader+w    Find Warnings          │  │ ~ / R      Toggle Case / Replacement │
+│ Leader+q    Clear Highlighting     │  │ Leader+o   Ollama Code Completion    │
+└────────────────────────────────────┘  └──────────────────────────────────────┘
+
+┌── Commands (:) ──────────────────────────────────────────────────────────────┐
+│ :w / :q / :wq   Save / Quit / Both    :bd / :bd!   Close Buffer (Force)      │
+│ :wa / :waq      Save All / Save & Q   :reload      Reload from Disk          │
+│ :! / :r!        Run / Read Shell      :mouse       Toggle Mouse Support      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                                                   (Press :q to close this help)
+
+DETAILED GUIDE
+══════════════
+
+MODES OVERVIEW
+──────────────
+QWE is a modal editor, meaning you switch between different modes to perform
+different actions. The current mode is displayed in the status bar.
+
+• Normal Mode (Default)
+  Used for navigation and text manipulation. You cannot type text directly in
+  this mode. Press 'Esc' from any other mode to return to Normal mode.
+
+• Insert Mode (Press 'i', 'a', 'o' etc.)
+  Used for typing text. Press 'Esc' to exit.
+  - 'i': Insert before cursor
+  - 'a': Append after cursor
+  - 'o': Open a new line below
+  - 'O': Open a new line above
+  - 'x': Delete char
+  - 'J': Join lines
+
+• Visual Modes (Press 'v', 'V', 'Ctrl+v')
+  Used for selecting text.
+  - 'v':      Select character by character
+  - 'V':      Select entire lines
+  - 'Ctrl+v': Select rectangular blocks (Vertical selection)
+  - 'x' / 'd': Delete selection
+  - 'zx':     Comment selection
+  - 'zq':     Format selection (80 char wrap)
+  - 'Q':      Jump to first character in line
+  - 'W':      Jump to end of line
+  Once selected, you can Yank (y), Delete (d/x), or Change (c) the selection.
+  - 'D':      Delete from cursor to end of line (Normal mode)
+
+• Command Mode (Press ':')
+  Used to execute editor commands.
+  - ':w', ':wa': Save current / all buffers
+  - ':q', ':wq': Quit / Save and quit
+  - ':bd':       Close current buffer
+  - ':reload':    Reload file from disk
+  - ':!cmd':     Run shell command
+  - ':r!cmd':    Run shell command and insert output
+
+
+SEARCH AND NAVIGATION
+─────────────────────
+• Search: Press '/' then type your query. Press 'Enter' to search.
+  Use 'n' to go to the next match, 'N' to go to the previous match.
+
+• Fuzzy Finders:
+  - Leader+p (default '\p'): Quickly find and open files in the project.
+  - Leader+b (default '\b'): Switch between open buffers.
+  - Leader+w (default '\w'): Jump to warnings/diagnostics.
+
+• Multi-Cursor:
+  - 'Ctrl+X': Add cursor at next occurrence of word under cursor.
+  - 'Ctrl+Up/Down': Add cursor on line above/below.
+  Edit multiple places at once and press 'Esc' to return to single cursor.
+
+• Formatting and Commenting:
+  - 'zx': Toggle comment on current line or selection.
+  - 'zq': Format paragraph or selection to 80 characters.
+  - 'zz': Center current line on screen.
+
+
+UPDATES
+───────
+Find updates on GitHub: https://github.com/mitjafelicijan/qwe-editor
+
+
+LICENSE
+───────
+
+BSD 2-Clause License
+
+Copyright (c) 2026, Mitja Felicijan <mitja.felicijan@gmail.com>
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
