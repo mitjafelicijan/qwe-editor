@@ -34,12 +34,17 @@ func (ch *Command) IsValidCommand(cmd string) bool {
 
 	// Valid if it's a known command
 	switch cmd {
-	case "q", "Q", "q!", "Q!", "w", "W", "wa", "WA", "wq", "WQ", "waq", "WAQ", "reload", "bd", "bd!", "debug", "help", "mouse", "e", "edit":
+	case "q", "Q", "q!", "Q!", "w", "W", "wa", "WA", "wq", "WQ", "waq", "WAQ", "reload", "bd", "bd!", "debug", "help", "mouse", "e", "edit", "n":
 		return true
 	}
 
 	// Valid if it starts with ! (shell command) or r! (read shell)
 	if strings.HasPrefix(cmd, "!") || strings.HasPrefix(cmd, "r!") {
+		return true
+	}
+
+	// Valid if it starts with w (write with filename)
+	if strings.HasPrefix(cmd, "w ") {
 		return true
 	}
 
@@ -104,7 +109,10 @@ func (ch *Command) Handle(cmd string) {
 	case cmd == "q!" || cmd == "Q!":
 		ch.quit(true)
 	case cmd == "w" || cmd == "W":
-		ch.write()
+		ch.write("")
+	case strings.HasPrefix(cmd, "w "):
+		filename := strings.TrimSpace(strings.TrimPrefix(cmd, "w "))
+		ch.write(filename)
 	case cmd == "wa" || cmd == "WA":
 		ch.writeAll()
 	case cmd == "wq" || cmd == "WQ":
@@ -129,6 +137,8 @@ func (ch *Command) Handle(cmd string) {
 		ch.bufferDelete(false)
 	case cmd == "bd!":
 		ch.bufferDelete(true)
+	case cmd == "n":
+		ch.e.NewBuffer()
 	case cmd == "debug":
 		ch.e.toggleDebugWindow()
 	case cmd == "help":
@@ -217,7 +227,14 @@ func (ch *Command) quit(force bool) {
 }
 
 // write saves the current active buffer to disk.
-func (ch *Command) write() {
+func (ch *Command) write(filename string) {
+	if filename != "" {
+		b := ch.e.activeBuffer()
+		if b != nil {
+			b.filename = filename
+			b.fileType = getFileType(filename)
+		}
+	}
 	err := ch.e.SaveFile(false)
 	if err != nil {
 		// Handle conflict if the file was changed externally.

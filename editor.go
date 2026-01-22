@@ -238,6 +238,25 @@ func (e *Editor) toggleDebugWindow() {
 	e.showDebugLog = !e.showDebugLog
 }
 
+// NewBuffer creates a new empty buffer and switches to it.
+func (e *Editor) NewBuffer() {
+	// Use default file type (Text), which is the last one in the list.
+	defaultType := fileTypes[len(fileTypes)-1]
+
+	newB := &Buffer{
+		buffer:    [][]rune{{}},
+		filename:  "",
+		undoStack: []HistoryState{},
+		redoStack: []HistoryState{},
+		fileType:  defaultType,
+	}
+
+	e.buffers = append(e.buffers, newB)
+	e.activeBufferIndex = len(e.buffers) - 1
+	e.message = "New buffer created"
+	e.introDismissed = true
+}
+
 // LoadFile reads a file from disk into the active buffer.
 func (e *Editor) LoadFile(filename string) error {
 	info, err := os.Stat(filename)
@@ -381,6 +400,7 @@ func (e *Editor) LoadFromReader(filename string, r io.Reader) error {
 		e.activeBufferIndex = len(e.buffers) - 1
 	}
 
+	e.introDismissed = true
 	return nil
 }
 
