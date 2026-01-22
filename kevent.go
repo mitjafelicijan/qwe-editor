@@ -121,6 +121,11 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 		e.triggerHover()
 	}
 
+	// Prevent key event fallthrough.
+	if ev.Key != 0 {
+		return
+	}
+
 	switch ev.Ch {
 	case 'i':
 		e.saveState()
@@ -640,6 +645,11 @@ func (e *Editor) handleVisualMode(ev termbox.Event) {
 		e.moveCursor(0, 1)
 	}
 
+	// Prevent key event fallthrough.
+	if ev.Key != 0 {
+		return
+	}
+
 	switch ev.Ch {
 	case Config.LeaderKey:
 		e.pendingKey = Config.LeaderKey
@@ -740,6 +750,11 @@ func (e *Editor) handleVisualLineMode(ev termbox.Event) {
 		e.moveCursor(0, 1)
 	}
 
+	// Prevent key event fallthrough.
+	if ev.Key != 0 {
+		return
+	}
+
 	switch ev.Ch {
 	case Config.LeaderKey:
 		e.pendingKey = Config.LeaderKey
@@ -837,6 +852,11 @@ func (e *Editor) handleVisualBlockMode(ev termbox.Event) {
 		e.moveCursor(0, -1)
 	case termbox.KeyArrowDown:
 		e.moveCursor(0, 1)
+	}
+
+	// Prevent key event fallthrough.
+	if ev.Key != 0 {
+		return
 	}
 
 	switch ev.Ch {
@@ -944,6 +964,11 @@ func (e *Editor) handleConfirmMode(ev termbox.Event) {
 		e.mode = ModeNormal
 		e.pendingConfirm = nil
 		e.message = "Cancelled"
+		return
+	}
+
+	// Prevent key event fallthrough.
+	if ev.Key != 0 {
 		return
 	}
 
