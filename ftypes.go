@@ -144,7 +144,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "Makefile",
-		Extensions: []string{".make", "Makefile"},
+		Extensions: []string{".make", "Makefile", "makefile"},
 		UseTabs:    true,
 		Comment:    "#",
 		TabWidth:   Config.DefaultTabWidth,
