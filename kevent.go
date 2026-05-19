@@ -5,15 +5,34 @@ package main
 // etc.).
 
 import (
+	"time"
+
 	"github.com/nsf/termbox-go"
+)
+
+const (
+	seqAltArrowUp    = "[1;3A"
+	seqAltArrowDown  = "[1;3B"
+	seqAltArrowRight = "[1;3C"
+	seqAltArrowLeft  = "[1;3D"
 )
 
 // HandleEvents is the central loop that waits for and processes all user input.
 func (e *Editor) HandleEvents() {
+	eventChan := make(chan termbox.Event)
+	go func() {
+		for {
+			eventChan <- termbox.PollEvent()
+		}
+	}()
+
 	for {
 		// Redraw the screen before waiting for the next event.
 		e.draw()
-		ev := termbox.PollEvent()
+		var ev termbox.Event
+		select {
+		case ev = <-eventChan:
+		}
 
 		// Handle interrupt events (triggered by diagnostic updates).
 		// Fetch latest diagnostics from LSP client.
@@ -39,32 +58,121 @@ func (e *Editor) HandleEvents() {
 				return
 			}
 
-			// Dispatch the key event to the handler for the current editor mode.
-			switch e.mode {
-			case ModeNormal:
-				e.handleNormalMode(ev)
-			case ModeInsert:
-				e.handleInsertMode(ev)
-			case ModeCommand:
-				e.handleCommandMode(ev)
-			case ModeFuzzy:
-				e.handleFuzzyMode(ev)
-			case ModeFind:
-				e.handleFindMode(ev)
-			case ModeVisual:
-				e.handleVisualMode(ev)
-			case ModeVisualLine:
-				e.handleVisualLineMode(ev)
-			case ModeVisualBlock:
-				e.handleVisualBlockMode(ev)
-			case ModeReplace:
-				e.handleReplaceMode(ev)
-			case ModeConfirm:
-				e.handleConfirmMode(ev)
+			// Special handling for ESC sequences (Alt+Arrows) in InputEsc mode.
+			if ev.Key == termbox.KeyEsc {
+				seq := ""
+				timer := time.NewTimer(30 * time.Millisecond)
+				matched := false
+				processed := false
+			seqLoop:
+				for {
+					select {
+					case nextEv := <-eventChan:
+						if nextEv.Type == termbox.EventKey {
+							if nextEv.Key != 0 {
+								// Some functional key followed ESC
+								if nextEv.Key == termbox.KeyArrowLeft {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowLeft, Mod: termbox.ModAlt}
+									matched = true
+								} else if nextEv.Key == termbox.KeyArrowRight {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowRight, Mod: termbox.ModAlt}
+									matched = true
+								} else if nextEv.Key == termbox.KeyArrowUp {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowUp, Mod: termbox.ModAlt}
+									matched = true
+								} else if nextEv.Key == termbox.KeyArrowDown {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowDown, Mod: termbox.ModAlt}
+									matched = true
+								} else {
+									// Not a known Alt+Arrow, process ESC then this key
+									e.dispatchEvent(ev)
+									ev = nextEv
+								}
+								break seqLoop
+							} else {
+								seq += string(nextEv.Ch)
+								if seq == seqAltArrowLeft {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowLeft, Mod: termbox.ModAlt}
+									matched = true
+									break seqLoop
+								}
+								if seq == seqAltArrowRight {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowRight, Mod: termbox.ModAlt}
+									matched = true
+									break seqLoop
+								}
+								if seq == seqAltArrowUp {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowUp, Mod: termbox.ModAlt}
+									matched = true
+									break seqLoop
+								}
+								if seq == seqAltArrowDown {
+									ev = termbox.Event{Type: termbox.EventKey, Key: termbox.KeyArrowDown, Mod: termbox.ModAlt}
+									matched = true
+									break seqLoop
+								}
+								if len(seq) > 5 {
+									// Sequence too long, process as individual keys
+									e.dispatchEvent(ev)
+									for _, r := range seq {
+										e.dispatchEvent(termbox.Event{Type: termbox.EventKey, Ch: r})
+									}
+									processed = true
+									break seqLoop
+								}
+							}
+						} else {
+							// Not a key event, process ESC then this event
+							e.dispatchEvent(ev)
+							ev = nextEv
+							break seqLoop
+						}
+					case <-timer.C:
+						break seqLoop
+					}
+				}
+				if processed {
+					continue
+				}
+				if !matched && seq != "" {
+					e.dispatchEvent(ev)
+					for _, r := range seq {
+						e.dispatchEvent(termbox.Event{Type: termbox.EventKey, Ch: r})
+					}
+					continue
+				}
 			}
+
+			e.dispatchEvent(ev)
 		} else if ev.Type == termbox.EventMouse {
 			e.handleMouseEvent(ev)
 		}
+	}
+}
+
+func (e *Editor) dispatchEvent(ev termbox.Event) {
+	// Dispatch the key event to the handler for the current editor mode.
+	switch e.mode {
+	case ModeNormal:
+		e.handleNormalMode(ev)
+	case ModeInsert:
+		e.handleInsertMode(ev)
+	case ModeCommand:
+		e.handleCommandMode(ev)
+	case ModeFuzzy:
+		e.handleFuzzyMode(ev)
+	case ModeFind:
+		e.handleFindMode(ev)
+	case ModeVisual:
+		e.handleVisualMode(ev)
+	case ModeVisualLine:
+		e.handleVisualLineMode(ev)
+	case ModeVisualBlock:
+		e.handleVisualBlockMode(ev)
+	case ModeReplace:
+		e.handleReplaceMode(ev)
+	case ModeConfirm:
+		e.handleConfirmMode(ev)
 	}
 }
 
@@ -85,17 +193,29 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 
 	switch ev.Key {
 	case termbox.KeyArrowLeft:
-		e.moveCursor(-1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.UnindentSelection(true)
+		} else {
+			e.moveCursor(-1, 0)
+		}
 	case termbox.KeyArrowRight:
-		e.moveCursor(1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.IndentSelection(true)
+		} else {
+			e.moveCursor(1, 0)
+		}
 	case termbox.KeyArrowUp:
-		if ev.Mod != 0 {
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesUp()
+		} else if ev.Mod != 0 {
 			e.addCursorAbove()
 		} else {
 			e.moveCursor(0, -1)
 		}
 	case termbox.KeyArrowDown:
-		if ev.Mod != 0 {
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesDown()
+		} else if ev.Mod != 0 {
 			e.addCursorBelow()
 		} else {
 			e.moveCursor(0, 1)
@@ -123,6 +243,10 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 
 	// Prevent key event fallthrough.
 	if ev.Key != 0 {
+		return
+	}
+
+	if ev.Mod&termbox.ModAlt != 0 {
 		return
 	}
 
@@ -248,6 +372,20 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 			e.pendingKey = 0
 		} else {
 			e.pendingKey = 'd'
+		}
+	case '>':
+		if e.pendingKey == '>' {
+			e.Indent()
+			e.pendingKey = 0
+		} else {
+			e.pendingKey = '>'
+		}
+	case '<':
+		if e.pendingKey == '<' {
+			e.Unindent()
+			e.pendingKey = 0
+		} else {
+			e.pendingKey = '<'
 		}
 	case 'y':
 		e.yankLine()
@@ -493,7 +631,7 @@ func (e *Editor) handleInsertMode(ev termbox.Event) {
 		e.triggerAutocomplete()
 	default:
 		// If a character key was pressed, insert the character.
-		if ev.Ch != 0 {
+		if ev.Ch != 0 && ev.Mod&termbox.ModAlt == 0 {
 			e.insertRune(ev.Ch)
 			// Close autocomplete if user keeps typing.
 			if e.showAutocomplete {
@@ -553,7 +691,7 @@ func (e *Editor) handleCommandMode(ev termbox.Event) {
 		// Navigate to next command in history
 		e.commands.NavigateHistoryDown()
 	default:
-		if ev.Ch != 0 {
+		if ev.Ch != 0 && ev.Mod&termbox.ModAlt == 0 {
 			// Insert character at cursor position
 			e.commandBuffer = append(e.commandBuffer[:e.commandCursorX], append([]rune{ev.Ch}, e.commandBuffer[e.commandCursorX:]...)...)
 			e.commandCursorX++
@@ -584,7 +722,7 @@ func (e *Editor) handleFuzzyMode(ev termbox.Event) {
 		e.updateFuzzyResults()
 	default:
 		// Update filter as user types.
-		if ev.Ch != 0 {
+		if ev.Ch != 0 && ev.Mod&termbox.ModAlt == 0 {
 			e.fuzzyBuffer = append(e.fuzzyBuffer, ev.Ch)
 			e.updateFuzzyResults()
 		}
@@ -619,7 +757,7 @@ func (e *Editor) handleFindMode(ev termbox.Event) {
 		e.lastSearch = string(e.findBuffer)
 	default:
 		// Incremental search: update e.lastSearch as the user types.
-		if ev.Ch != 0 {
+		if ev.Ch != 0 && ev.Mod&termbox.ModAlt == 0 {
 			e.findBuffer = append(e.findBuffer, ev.Ch)
 			e.lastSearch = string(e.findBuffer)
 		}
@@ -636,17 +774,37 @@ func (e *Editor) handleVisualMode(ev termbox.Event) {
 
 	switch ev.Key {
 	case termbox.KeyArrowLeft:
-		e.moveCursor(-1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.UnindentSelection(true)
+		} else {
+			e.moveCursor(-1, 0)
+		}
 	case termbox.KeyArrowRight:
-		e.moveCursor(1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.IndentSelection(true)
+		} else {
+			e.moveCursor(1, 0)
+		}
 	case termbox.KeyArrowUp:
-		e.moveCursor(0, -1)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesUp()
+		} else {
+			e.moveCursor(0, -1)
+		}
 	case termbox.KeyArrowDown:
-		e.moveCursor(0, 1)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesDown()
+		} else {
+			e.moveCursor(0, 1)
+		}
 	}
 
 	// Prevent key event fallthrough.
 	if ev.Key != 0 {
+		return
+	}
+
+	if ev.Mod&termbox.ModAlt != 0 {
 		return
 	}
 
@@ -675,6 +833,10 @@ func (e *Editor) handleVisualMode(ev termbox.Event) {
 		e.deleteVisualSelection()
 		e.checkDiagnostics()
 		e.message = "Selection deleted"
+	case '>':
+		e.Indent()
+	case '<':
+		e.Unindent()
 	case 'x':
 		if e.pendingKey == 'z' {
 			e.saveState()
@@ -745,17 +907,37 @@ func (e *Editor) handleVisualLineMode(ev termbox.Event) {
 
 	switch ev.Key {
 	case termbox.KeyArrowLeft:
-		e.moveCursor(-1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.UnindentSelection(true)
+		} else {
+			e.moveCursor(-1, 0)
+		}
 	case termbox.KeyArrowRight:
-		e.moveCursor(1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.IndentSelection(true)
+		} else {
+			e.moveCursor(1, 0)
+		}
 	case termbox.KeyArrowUp:
-		e.moveCursor(0, -1)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesUp()
+		} else {
+			e.moveCursor(0, -1)
+		}
 	case termbox.KeyArrowDown:
-		e.moveCursor(0, 1)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesDown()
+		} else {
+			e.moveCursor(0, 1)
+		}
 	}
 
 	// Prevent key event fallthrough.
 	if ev.Key != 0 {
+		return
+	}
+
+	if ev.Mod&termbox.ModAlt != 0 {
 		return
 	}
 
@@ -784,6 +966,10 @@ func (e *Editor) handleVisualLineMode(ev termbox.Event) {
 		e.deleteVisualSelection()
 		e.checkDiagnostics()
 		e.message = "Selection deleted"
+	case '>':
+		e.Indent()
+	case '<':
+		e.Unindent()
 	case 'x':
 		if e.pendingKey == 'z' {
 			e.saveState()
@@ -853,17 +1039,37 @@ func (e *Editor) handleVisualBlockMode(ev termbox.Event) {
 
 	switch ev.Key {
 	case termbox.KeyArrowLeft:
-		e.moveCursor(-1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.UnindentSelection(true)
+		} else {
+			e.moveCursor(-1, 0)
+		}
 	case termbox.KeyArrowRight:
-		e.moveCursor(1, 0)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.IndentSelection(true)
+		} else {
+			e.moveCursor(1, 0)
+		}
 	case termbox.KeyArrowUp:
-		e.moveCursor(0, -1)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesUp()
+		} else {
+			e.moveCursor(0, -1)
+		}
 	case termbox.KeyArrowDown:
-		e.moveCursor(0, 1)
+		if ev.Mod&termbox.ModAlt != 0 {
+			e.MoveLinesDown()
+		} else {
+			e.moveCursor(0, 1)
+		}
 	}
 
 	// Prevent key event fallthrough.
 	if ev.Key != 0 {
+		return
+	}
+
+	if ev.Mod&termbox.ModAlt != 0 {
 		return
 	}
 
@@ -892,6 +1098,10 @@ func (e *Editor) handleVisualBlockMode(ev termbox.Event) {
 		e.deleteVisualSelection()
 		e.checkDiagnostics()
 		e.message = "Selection deleted"
+	case '>':
+		e.Indent()
+	case '<':
+		e.Unindent()
 	case 'x':
 		if e.pendingKey == 'z' {
 			e.saveState()
@@ -981,6 +1191,10 @@ func (e *Editor) handleConfirmMode(ev termbox.Event) {
 
 	// Prevent key event fallthrough.
 	if ev.Key != 0 {
+		return
+	}
+
+	if ev.Mod&termbox.ModAlt != 0 {
 		return
 	}
 

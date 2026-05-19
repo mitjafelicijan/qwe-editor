@@ -1080,6 +1080,261 @@ func (e *Editor) getIndentation(line []rune) []rune {
 	return indent
 }
 
+func (e *Editor) indentLine(y int) {
+	b := e.activeBuffer()
+	if b == nil || y < 0 || y >= len(b.buffer) {
+		return
+	}
+
+	tabWidth := Config.DefaultTabWidth
+	if b.fileType != nil {
+		tabWidth = b.fileType.TabWidth
+	}
+
+	var indentRunes []rune
+	if e.useTabs() {
+		indentRunes = []rune{'\t'}
+	} else {
+		indentRunes = []rune(strings.Repeat(" ", tabWidth))
+	}
+
+	line := b.buffer[y]
+	newLine := append(indentRunes, line...)
+	b.buffer[y] = newLine
+
+	// Shift cursors on this line
+	for i := range b.cursors {
+		if b.cursors[i].Y == y {
+			b.cursors[i].X += len(indentRunes)
+			b.cursors[i].PreferredCol = b.cursors[i].X
+		}
+	}
+
+	// Shift visual anchor if it's on this line
+	if (e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock) && e.visualStartY == y {
+		e.visualStartX += len(indentRunes)
+	}
+}
+
+func (e *Editor) unindentLine(y int) {
+	b := e.activeBuffer()
+	if b == nil || y < 0 || y >= len(b.buffer) {
+		return
+	}
+
+	line := b.buffer[y]
+	if len(line) == 0 {
+		return
+	}
+
+	tabWidth := Config.DefaultTabWidth
+	if b.fileType != nil {
+		tabWidth = b.fileType.TabWidth
+	}
+
+	removedCount := 0
+	if line[0] == '\t' {
+		removedCount = 1
+	} else if line[0] == ' ' {
+		removedCount = 0
+		for removedCount < tabWidth && removedCount < len(line) && line[removedCount] == ' ' {
+			removedCount++
+		}
+	}
+
+	if removedCount > 0 {
+		b.buffer[y] = line[removedCount:]
+		// Shift cursors on this line
+		for i := range b.cursors {
+			if b.cursors[i].Y == y {
+				b.cursors[i].X -= removedCount
+				if b.cursors[i].X < 0 {
+					b.cursors[i].X = 0
+				}
+				b.cursors[i].PreferredCol = b.cursors[i].X
+			}
+		}
+
+		// Shift visual anchor if it's on this line
+		if (e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock) && e.visualStartY == y {
+			e.visualStartX -= removedCount
+			if e.visualStartX < 0 {
+				e.visualStartX = 0
+			}
+		}
+	}
+}
+
+func (e *Editor) Indent() {
+	e.IndentSelection(false)
+}
+
+func (e *Editor) IndentSelection(stayInMode bool) {
+	b := e.activeBuffer()
+	if b == nil {
+		return
+	}
+	if b.readOnly {
+		e.message = "File is read-only"
+		return
+	}
+
+	e.saveState()
+
+	if e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock {
+		y1, _, y2, _ := e.getSelectionBounds()
+		for y := y1; y <= y2; y++ {
+			e.indentLine(y)
+		}
+		if !stayInMode {
+			e.mode = ModeNormal
+		}
+	} else {
+		// Indent lines with cursors
+		lines := make(map[int]bool)
+		for _, c := range b.cursors {
+			lines[c.Y] = true
+		}
+		for y := range lines {
+			e.indentLine(y)
+		}
+	}
+
+	if b.syntax != nil {
+		b.syntax.Reparse([]byte(b.toString()))
+	}
+	e.markModified()
+}
+
+func (e *Editor) Unindent() {
+	e.UnindentSelection(false)
+}
+
+func (e *Editor) UnindentSelection(stayInMode bool) {
+	b := e.activeBuffer()
+	if b == nil {
+		return
+	}
+	if b.readOnly {
+		e.message = "File is read-only"
+		return
+	}
+
+	e.saveState()
+
+	if e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock {
+		y1, _, y2, _ := e.getSelectionBounds()
+		for y := y1; y <= y2; y++ {
+			e.unindentLine(y)
+		}
+		if !stayInMode {
+			e.mode = ModeNormal
+		}
+	} else {
+		// Unindent lines with cursors
+		lines := make(map[int]bool)
+		for _, c := range b.cursors {
+			lines[c.Y] = true
+		}
+		for y := range lines {
+			e.unindentLine(y)
+		}
+	}
+
+	if b.syntax != nil {
+		b.syntax.Reparse([]byte(b.toString()))
+	}
+	e.markModified()
+}
+
+func (e *Editor) MoveLinesUp() {
+	e.moveLines(-1)
+}
+
+func (e *Editor) MoveLinesDown() {
+	e.moveLines(1)
+}
+
+func (e *Editor) moveLines(dy int) {
+	b := e.activeBuffer()
+	if b == nil || b.readOnly || len(b.buffer) == 0 {
+		return
+	}
+
+	e.saveState()
+
+	var y1, y2 int
+	if e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock {
+		y1, _, y2, _ = e.getSelectionBounds()
+	} else {
+		y1 = b.PrimaryCursor().Y
+		y2 = b.PrimaryCursor().Y
+		for _, c := range b.cursors {
+			if c.Y < y1 {
+				y1 = c.Y
+			}
+			if c.Y > y2 {
+				y2 = c.Y
+			}
+		}
+	}
+
+	if dy == -1 && y1 > 0 {
+		// Move block up: swap y1-1 with the block [y1, y2]
+		lineAbove := b.buffer[y1-1]
+		for y := y1; y <= y2; y++ {
+			b.buffer[y-1] = b.buffer[y]
+		}
+		b.buffer[y2] = lineAbove
+
+		// Update cursors
+		for i := range b.cursors {
+			if b.cursors[i].Y >= y1 && b.cursors[i].Y <= y2 {
+				b.cursors[i].Y--
+			} else if b.cursors[i].Y == y1-1 {
+				b.cursors[i].Y += (y2 - y1 + 1)
+			}
+		}
+		// Update visual anchor
+		if e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock {
+			if e.visualStartY >= y1 && e.visualStartY <= y2 {
+				e.visualStartY--
+			} else if e.visualStartY == y1-1 {
+				e.visualStartY += (y2 - y1 + 1)
+			}
+		}
+	} else if dy == 1 && y2 < len(b.buffer)-1 {
+		// Move block down: swap y2+1 with the block [y1, y2]
+		lineBelow := b.buffer[y2+1]
+		for y := y2; y >= y1; y-- {
+			b.buffer[y+1] = b.buffer[y]
+		}
+		b.buffer[y1] = lineBelow
+
+		// Update cursors
+		for i := range b.cursors {
+			if b.cursors[i].Y >= y1 && b.cursors[i].Y <= y2 {
+				b.cursors[i].Y++
+			} else if b.cursors[i].Y == y2+1 {
+				b.cursors[i].Y -= (y2 - y1 + 1)
+			}
+		}
+		// Update visual anchor
+		if e.mode == ModeVisual || e.mode == ModeVisualLine || e.mode == ModeVisualBlock {
+			if e.visualStartY >= y1 && e.visualStartY <= y2 {
+				e.visualStartY++
+			} else if e.visualStartY == y2+1 {
+				e.visualStartY -= (y2 - y1 + 1)
+			}
+		}
+	}
+
+	if b.syntax != nil {
+		b.syntax.Reparse([]byte(b.toString()))
+	}
+	e.markModified()
+}
+
 // insertNewline breaks the line at cursor and handles auto-indentation.
 func (e *Editor) insertNewline() {
 	b := e.activeBuffer()

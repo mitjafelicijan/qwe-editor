@@ -75,7 +75,7 @@ func (e *Editor) handleReplaceMode(ev termbox.Event) {
 		e.replaceInput = append(e.replaceInput, ' ')
 		e.updateReplacePreview()
 	default:
-		if ev.Ch != 0 {
+		if ev.Ch != 0 && ev.Mod&termbox.ModAlt == 0 {
 			e.replaceInput = append(e.replaceInput, ev.Ch)
 			e.updateReplacePreview() // Live preview of matches as user types.
 		}
