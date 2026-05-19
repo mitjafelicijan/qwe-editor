@@ -225,7 +225,7 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 		e.jumpToLineEnd()
 	case 'g':
 		e.pendingKey = 'g'
-	case 'j':
+	case 'J':
 		e.saveState()
 		e.JoinLines()
 		e.checkDiagnostics()
@@ -651,6 +651,10 @@ func (e *Editor) handleVisualMode(ev termbox.Event) {
 	}
 
 	switch ev.Ch {
+	case 'J':
+		e.saveState()
+		e.JoinLines()
+		e.checkDiagnostics()
 	case Config.LeaderKey:
 		e.pendingKey = Config.LeaderKey
 	case 'w':
@@ -756,6 +760,10 @@ func (e *Editor) handleVisualLineMode(ev termbox.Event) {
 	}
 
 	switch ev.Ch {
+	case 'J':
+		e.saveState()
+		e.JoinLines()
+		e.checkDiagnostics()
 	case Config.LeaderKey:
 		e.pendingKey = Config.LeaderKey
 	case 'w':
@@ -860,6 +868,10 @@ func (e *Editor) handleVisualBlockMode(ev termbox.Event) {
 	}
 
 	switch ev.Ch {
+	case 'J':
+		e.saveState()
+		e.JoinLines()
+		e.checkDiagnostics()
 	case Config.LeaderKey:
 		e.pendingKey = Config.LeaderKey
 	case 'w':
