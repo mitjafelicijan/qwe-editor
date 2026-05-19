@@ -176,6 +176,44 @@ func (e *Editor) bufferToString(buffer [][]rune) string {
 	return result.String()
 }
 
+func (e *Editor) wrapText(text string, maxWidth int) []string {
+	var lines []string
+	paragraphs := strings.Split(text, "\n")
+
+	for _, p := range paragraphs {
+		words := strings.Fields(p)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+
+		currentLine := ""
+		for _, word := range words {
+			if len(currentLine)+len(word)+1 <= maxWidth {
+				if currentLine == "" {
+					currentLine = word
+				} else {
+					currentLine += " " + word
+				}
+			} else {
+				if currentLine != "" {
+					lines = append(lines, currentLine)
+				}
+				// If a single word is longer than maxWidth, we have to break it
+				for len(word) > maxWidth {
+					lines = append(lines, word[:maxWidth])
+					word = word[maxWidth:]
+				}
+				currentLine = word
+			}
+		}
+		if currentLine != "" {
+			lines = append(lines, currentLine)
+		}
+	}
+	return lines
+}
+
 // NewEditor creates a new editor instance with a default empty buffer.
 func NewEditor(devMode bool) *Editor {
 	e := &Editor{
@@ -1735,6 +1773,9 @@ func (e *Editor) gotoDefinition() {
 	}
 
 	e.pushJump()
+
+	// Sync buffer content with LSP server before requesting definition.
+	b.lspClient.SendDidChange(b.toString())
 
 	locs, err := b.lspClient.Definition(b.PrimaryCursor().Y, b.PrimaryCursor().X)
 	if err != nil {
@@ -4588,6 +4629,9 @@ func (e *Editor) triggerHover() {
 	e.message = "Requesting signature..."
 	e.draw()
 
+	// Sync buffer content with LSP server before requesting hover.
+	b.lspClient.SendDidChange(b.toString())
+
 	cursor := b.PrimaryCursor()
 	content, err := b.lspClient.Hover(cursor.Y, cursor.X)
 	if err != nil {
@@ -4609,6 +4653,9 @@ func (e *Editor) triggerAutocomplete() {
 	e.message = "Requesting completions..."
 	e.draw()
 
+	// Sync buffer content with LSP server before requesting completions.
+	b.lspClient.SendDidChange(b.toString())
+
 	cursor := b.PrimaryCursor()
 	items, err := b.lspClient.Completion(cursor.Y, cursor.X)
 	if err != nil {
@@ -4626,6 +4673,35 @@ func (e *Editor) triggerAutocomplete() {
 	e.autocompleteScroll = 0
 	e.showAutocomplete = true
 	e.message = ""
+
+	e.resolveSelectedCompletion()
+}
+
+func (e *Editor) resolveSelectedCompletion() {
+	b := e.activeBuffer()
+	if b == nil || b.lspClient == nil {
+		return
+	}
+
+	if e.autocompleteIndex < 0 || e.autocompleteIndex >= len(e.autocompleteItems) {
+		return
+	}
+
+	item := e.autocompleteItems[e.autocompleteIndex]
+
+	// If it already has documentation and it's not a resolve-only item, maybe skip?
+	// But clangd often sends partial info.
+
+	go func(index int, it CompletionItem) {
+		resolved, err := b.lspClient.ResolveCompletion(it)
+		if err == nil {
+			// Update the item in the list if the index is still the same
+			if e.autocompleteIndex == index {
+				e.autocompleteItems[index] = resolved
+				termbox.Interrupt() // Redraw
+			}
+		}
+	}(e.autocompleteIndex, item)
 }
 
 func (e *Editor) drawAutocompletePopup() {
@@ -4639,31 +4715,81 @@ func (e *Editor) drawAutocompletePopup() {
 		return
 	}
 
-	// Calculate max label width for alignment
-	maxLabelWidth := 0
-	for _, item := range e.autocompleteItems {
-		if len(item.Label) > maxLabelWidth {
-			maxLabelWidth = len(item.Label)
+	// Helper to get extra info (signature or type) for an item
+	getExtraInfo := func(item CompletionItem) string {
+		info := ""
+
+		// 1. Try LabelDetails (standard in newer LSP)
+		if item.LabelDetails != nil {
+			// For functions, Detail usually has the parameters: (a, b int)
+			// For variables, Description usually has the type: int
+			if item.Kind == 2 || item.Kind == 3 { // Method or Function
+				if item.LabelDetails.Detail != "" {
+					info = item.LabelDetails.Detail
+				} else if item.LabelDetails.Description != "" {
+					info = item.LabelDetails.Description
+				}
+			} else {
+				// For variables/others, prefer Description (type)
+				if item.LabelDetails.Description != "" {
+					info = item.LabelDetails.Description
+				} else if item.LabelDetails.Detail != "" {
+					info = item.LabelDetails.Detail
+				}
+			}
+		}
+
+		// 2. Fallback to Detail if still empty
+		if info == "" && item.Detail != "" {
+			info = item.Detail
+			// Some servers put the whole label in the detail, strip it if so
+			cleanLabel := item.Label
+			for strings.HasPrefix(cleanLabel, "•") || strings.HasPrefix(cleanLabel, " ") {
+				cleanLabel = strings.TrimPrefix(cleanLabel, "•")
+				cleanLabel = strings.TrimPrefix(cleanLabel, " ")
+			}
+			if strings.HasPrefix(info, cleanLabel) {
+				info = strings.TrimSpace(strings.TrimPrefix(info, cleanLabel))
+			}
+		}
+
+		return strings.TrimSpace(info)
+	}
+
+	// Calculate max width for the combined display
+	maxTotalWidth := 0
+	type itemDisplay struct {
+		label string
+		sig   string
+	}
+	displayItems := make([]itemDisplay, len(e.autocompleteItems))
+
+	for i, item := range e.autocompleteItems {
+		label := item.Label
+		for strings.HasPrefix(label, "•") || strings.HasPrefix(label, " ") {
+			label = strings.TrimPrefix(label, "•")
+			label = strings.TrimPrefix(label, " ")
+		}
+
+		extra := getExtraInfo(item)
+		displayItems[i] = itemDisplay{label: label, sig: extra}
+
+		width := len(label)
+		if extra != "" {
+			width += len(extra) + 1 // +1 for spacing
+		}
+		if width > maxTotalWidth {
+			maxTotalWidth = width
 		}
 	}
 
-	// Calculate total width: label + separator + detail
-	maxWidth := 0
-	for _, item := range e.autocompleteItems {
-		displayText := item.Label
-		if item.Detail != "" {
-			// Pad label to align, then add arrow and detail
-			padding := maxLabelWidth - len(item.Label)
-			displayText = item.Label + strings.Repeat(" ", padding) + " " + item.Detail
-		}
-		if len(displayText) > maxWidth {
-			maxWidth = len(displayText)
-		}
+	maxWidth := maxTotalWidth
+	if maxWidth > 80 {
+		maxWidth = 80
 	}
-
-	// Cap width to terminal width
-	if maxWidth > w-10 {
-		maxWidth = w - 10
+	// Leave space for gutter and borders
+	if maxWidth > w-Config.GutterWidth-4 {
+		maxWidth = w - Config.GutterWidth - 4
 	}
 
 	popupWidth := maxWidth + 2
@@ -4680,7 +4806,6 @@ func (e *Editor) drawAutocompletePopup() {
 	startX := cursorScreenX
 	startY := cursorScreenY + 1
 
-	// Adjust if out of bounds
 	if startY+popupHeight > h-1 {
 		startY = cursorScreenY - popupHeight
 	}
@@ -4691,39 +4816,54 @@ func (e *Editor) drawAutocompletePopup() {
 		startX = 0
 	}
 
-	fg, bg := GetThemeColor(ColorAutocompleteWindow)
+	_, bg := GetThemeColor(ColorAutocompleteWindow)
 	selFg, selBg := GetThemeColor(ColorAutocompleteSelected)
+
+	blackFg := termbox.ColorBlack
+	darkGrayFg := termbox.Attribute(244) // Dark gray in 256-color palette
 
 	// Draw background and content
 	for y := 0; y < popupHeight; y++ {
 		itemIdx := y + e.autocompleteScroll
-		if itemIdx >= len(e.autocompleteItems) {
+		if itemIdx >= len(displayItems) {
 			break
 		}
-		item := e.autocompleteItems[itemIdx]
+		item := displayItems[itemIdx]
 
-		currentFg, currentBg := fg, bg
+		currentBg := bg
+		labelFg := blackFg
+		sigFg := darkGrayFg
+
 		if itemIdx == e.autocompleteIndex {
-			currentFg, currentBg = selFg, selBg
+			currentBg = selBg
+			labelFg = selFg
+			sigFg = selFg // Use selected foreground for both in selection
 		}
 
 		// Fill line
 		for x := 0; x < popupWidth; x++ {
-			termbox.SetCell(startX+x, startY+y, ' ', currentFg, currentBg)
+			termbox.SetCell(startX+x, startY+y, ' ', labelFg, currentBg)
 		}
 
-		// Draw label and detail (signature) with alignment
-		displayText := item.Label
-		if item.Detail != "" {
-			// Pad label to align with others
-			padding := maxLabelWidth - len(item.Label)
-			displayText = item.Label + strings.Repeat(" ", padding) + "  " + item.Detail
+		// Draw label
+		lx := 0
+		for _, r := range item.label {
+			if lx < maxWidth {
+				termbox.SetCell(startX+1+lx, startY+y, r, labelFg, currentBg)
+				lx++
+			}
 		}
-		if len(displayText) > maxWidth {
-			displayText = displayText[:maxWidth-3] + "..."
-		}
-		for j, r := range displayText {
-			termbox.SetCell(startX+1+j, startY+y, r, currentFg, currentBg)
+
+		// Draw signature if it fits
+		if item.sig != "" && lx < maxWidth-1 {
+			termbox.SetCell(startX+1+lx, startY+y, ' ', sigFg, currentBg)
+			lx++
+			for _, r := range item.sig {
+				if lx < maxWidth {
+					termbox.SetCell(startX+1+lx, startY+y, r, sigFg, currentBg)
+					lx++
+				}
+			}
 		}
 	}
 }
@@ -4749,7 +4889,9 @@ func (e *Editor) insertCompletion(item CompletionItem) {
 
 	// Text to insert
 	insertText := item.InsertText
-	if insertText == "" {
+	if item.TextEdit != nil {
+		insertText = item.TextEdit.NewText
+	} else if insertText == "" {
 		insertText = item.Label
 	}
 

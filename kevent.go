@@ -563,6 +563,7 @@ func (e *Editor) handleInsertMode(ev termbox.Event) {
 			if e.autocompleteIndex >= e.autocompleteScroll+10 {
 				e.autocompleteScroll = e.autocompleteIndex - 9
 			}
+			e.resolveSelectedCompletion()
 			return
 		case termbox.KeyArrowDown:
 			e.autocompleteIndex++
@@ -576,6 +577,7 @@ func (e *Editor) handleInsertMode(ev termbox.Event) {
 			if e.autocompleteIndex >= e.autocompleteScroll+10 {
 				e.autocompleteScroll = e.autocompleteIndex - 9
 			}
+			e.resolveSelectedCompletion()
 			return
 		case termbox.KeyEnter:
 			e.insertCompletion(e.autocompleteItems[e.autocompleteIndex])

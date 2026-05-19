@@ -8,6 +8,7 @@ import "path/filepath"
 // FileType represents the configuration for a specific programming language.
 type FileType struct {
 	Name             string   // Display name of the file type.
+	LanguageID       string   // LSP language identifier (e.g., "cpp", "typescriptreact").
 	Extensions       []string // File extensions (e.g., .go, .py) or filenames (e.g., Makefile).
 	UseTabs          bool     // Whether to use tabs for indentation.
 	Comment          string   // Single-line comment prefix (e.g., // or #).
@@ -21,16 +22,19 @@ type FileType struct {
 // fileTypes is a global list of all supported languages in the editor.
 var fileTypes = []*FileType{
 	{
-		Name:       "Go",
-		Extensions: []string{".go"},
-		UseTabs:    true,
-		Comment:    "//",
-		TabWidth:   Config.DefaultTabWidth,
-		EnableLSP:  true,
-		LSPCommand: "gopls",
+		Name:           "Go",
+		LanguageID:     "go",
+		Extensions:     []string{".go"},
+		UseTabs:        true,
+		Comment:        "//",
+		TabWidth:       Config.DefaultTabWidth,
+		EnableLSP:      true,
+		LSPCommand:     "gopls",
+		LSPCommandArgs: []string{"serve"},
 	},
 	{
 		Name:       "C",
+		LanguageID: "c",
 		Extensions: []string{".c", ".h"},
 		UseTabs:    true,
 		Comment:    "//",
@@ -40,6 +44,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "C++",
+		LanguageID: "cpp",
 		Extensions: []string{".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx"},
 		UseTabs:    true,
 		Comment:    "//",
@@ -49,6 +54,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:           "JavaScript",
+		LanguageID:     "javascript",
 		Extensions:     []string{".js"},
 		UseTabs:        true,
 		Comment:        "//",
@@ -59,6 +65,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:           "TypeScript",
+		LanguageID:     "typescript",
 		Extensions:     []string{".ts"},
 		UseTabs:        true,
 		Comment:        "//",
@@ -69,6 +76,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:           "TSX",
+		LanguageID:     "typescriptreact",
 		Extensions:     []string{".tsx"},
 		UseTabs:        true,
 		Comment:        "//",
@@ -79,15 +87,18 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:           "Python",
+		LanguageID:     "python",
 		Extensions:     []string{".py"},
 		UseTabs:        false,
 		Comment:        "#",
 		TabWidth:       Config.DefaultTabWidth,
+		EnableLSP:      true,
 		LSPCommand:     "pyright-langserver",
 		LSPCommandArgs: []string{"--stdio"},
 	},
 	{
 		Name:       "Bash",
+		LanguageID: "shellscript",
 		Extensions: []string{".sh"},
 		UseTabs:    true,
 		Comment:    "#",
@@ -95,6 +106,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "CSS",
+		LanguageID: "css",
 		Extensions: []string{".css"},
 		UseTabs:    false,
 		Comment:    "//",
@@ -102,6 +114,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "Dockerfile",
+		LanguageID: "dockerfile",
 		Extensions: []string{".dockerfile", "Dockerfile"},
 		UseTabs:    false,
 		Comment:    "#",
@@ -109,6 +122,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "HTML",
+		LanguageID: "html",
 		Extensions: []string{".html", ".htm"},
 		UseTabs:    false,
 		Comment:    "",
@@ -116,6 +130,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "Lua",
+		LanguageID: "lua",
 		Extensions: []string{".lua"},
 		UseTabs:    true,
 		Comment:    "--",
@@ -123,6 +138,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "Markdown",
+		LanguageID: "markdown",
 		Extensions: []string{".md", ".markdown"},
 		UseTabs:    false,
 		Comment:    "",
@@ -130,6 +146,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "PHP",
+		LanguageID: "php",
 		Extensions: []string{".php"},
 		UseTabs:    true,
 		Comment:    "//",
@@ -137,6 +154,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "SQL",
+		LanguageID: "sql",
 		Extensions: []string{".sql"},
 		UseTabs:    true,
 		Comment:    "--",
@@ -144,6 +162,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "Makefile",
+		LanguageID: "makefile",
 		Extensions: []string{".make", "Makefile", "makefile"},
 		UseTabs:    true,
 		Comment:    "#",
@@ -151,6 +170,7 @@ var fileTypes = []*FileType{
 	},
 	{
 		Name:       "Text",
+		LanguageID: "plaintext",
 		Extensions: []string{},
 		UseTabs:    false,
 		Comment:    "",

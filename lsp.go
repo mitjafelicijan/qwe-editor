@@ -37,7 +37,8 @@ type LSPClient struct {
 
 	responses     map[int64]chan map[string]interface{} // Map of request IDs to response channels.
 	responseMutex sync.Mutex
-	fileType      *FileType // Associated file type for language ID.
+	writeMutex    sync.Mutex // Protects concurrent writes to stdin.
+	fileType      *FileType  // Associated file type for language ID.
 }
 
 // Position in a document (0-based line and character).
@@ -60,11 +61,25 @@ type Location struct {
 
 // CompletionItem represents a suggestion for completion.
 type CompletionItem struct {
-	Label         string `json:"label"`
-	Kind          int    `json:"kind"`
-	Detail        string `json:"detail"`
-	Documentation string `json:"documentation"`
-	InsertText    string `json:"insertText"`
+	Label         string               `json:"label"`
+	LabelDetails  *CompletionItemLabel `json:"labelDetails"`
+	Kind          int                  `json:"kind"`
+	Detail        string               `json:"detail"`
+	Documentation interface{}          `json:"documentation"`
+	InsertText    string               `json:"insertText"`
+	FilterText    string               `json:"filterText"`
+	TextEdit      *TextEdit            `json:"textEdit"`
+	Data          interface{}          `json:"data"` // Opaque data for resolve request
+}
+
+type CompletionItemLabel struct {
+	Detail      string `json:"detail"`      // e.g. (int a, int b)
+	Description string `json:"description"` // e.g. int
+}
+
+type TextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
 }
 
 // CompletionList represents a collection of completion items.
@@ -108,10 +123,17 @@ func NewLSPClient(filename string, fileContent string, logCallback func(string, 
 	// Launch the language server's executable.
 	client.cmd = exec.Command(ft.LSPCommand, ft.LSPCommandArgs...)
 
-	// Suppress the server's own internal log messages (stderr).
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	// Suppress the server's own internal log messages (stderr) and redirect to logCallback.
+	stderr, err := client.cmd.StderrPipe()
 	if err == nil {
-		client.cmd.Stderr = devNull
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				if client.logCallback != nil {
+					client.logCallback("LSP-stderr", scanner.Text())
+				}
+			}
+		}()
 	}
 
 	client.stdin, err = client.cmd.StdinPipe()
@@ -123,6 +145,9 @@ func NewLSPClient(filename string, fileContent string, logCallback func(string, 
 	if err != nil {
 		return nil, err
 	}
+
+	// Set working directory to the project root to help server find config files and resolve relative paths.
+	client.cmd.Dir = findProjectRoot(absPath)
 
 	if err := client.cmd.Start(); err != nil {
 		return nil, err
@@ -150,16 +175,39 @@ func (c *LSPClient) nextID() int64 {
 	return atomic.AddInt64(&c.messageID, 1)
 }
 
+// Request sends a JSON-RPC request and waits for a response (up to 5s).
+func (c *LSPClient) Request(method string, params interface{}) (map[string]interface{}, error) {
+	id := c.nextID()
+	responseChan := make(chan map[string]interface{}, 1)
+	c.responseMutex.Lock()
+	c.responses[id] = responseChan
+	c.responseMutex.Unlock()
+
+	if err := c.sendRequestWithID(id, method, params); err != nil {
+		c.responseMutex.Lock()
+		delete(c.responses, id)
+		c.responseMutex.Unlock()
+		return nil, err
+	}
+
+	select {
+	case resp := <-responseChan:
+		if errVal, ok := resp["error"]; ok {
+			return nil, fmt.Errorf("LSP error: %v", errVal)
+		}
+		return resp, nil
+	case <-time.After(10 * time.Second):
+		c.responseMutex.Lock()
+		delete(c.responses, id)
+		c.responseMutex.Unlock()
+		return nil, fmt.Errorf("LSP request timeout: %s", method)
+	}
+}
+
 // sendRequest sends a JSON-RPC request and expects a response.
 func (c *LSPClient) sendRequest(method string, params interface{}) error {
-	id := c.nextID()
-	request := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	return c.sendMessage(request)
+	_, err := c.Request(method, params)
+	return err
 }
 
 // sendNotification sends a JSON-RPC message without expecting a response.
@@ -183,8 +231,19 @@ func (c *LSPClient) sendMessage(msg interface{}) error {
 		return err
 	}
 
+	if c.logCallback != nil {
+		msgStr := string(data)
+		if len(msgStr) > 500 {
+			msgStr = msgStr[:500] + "..."
+		}
+		c.logCallback("LSP-send", msgStr)
+	}
+
 	// LSP messages use a header similar to HTTP: Content-Length followed by \r\n\r\n.
 	content := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(data), data)
+
+	c.writeMutex.Lock()
+	defer c.writeMutex.Unlock()
 	_, err = c.stdin.Write([]byte(content))
 	return err
 }
@@ -211,9 +270,12 @@ func (c *LSPClient) readMessages() {
 				break
 			}
 
+			lowerLine := strings.ToLower(line)
 			var length int
-			if n, _ := fmt.Sscanf(line, "Content-Length: %d", &length); n == 1 {
-				contentLength = length
+			if strings.HasPrefix(lowerLine, "content-length:") {
+				if n, _ := fmt.Sscanf(lowerLine, "content-length: %d", &length); n == 1 {
+					contentLength = length
+				}
 			}
 		}
 
@@ -233,43 +295,81 @@ func (c *LSPClient) readMessages() {
 			continue
 		}
 
-		// If the message has an "id", it's a response to a request we sent.
+		// If the message has an "id", it's either a response to a request we sent
+		// or a request from the server to us.
 		if idVal, hasID := msg["id"]; hasID {
-			if c.logCallback != nil {
-				c.logCallback("LSP", fmt.Sprintf("Received response with ID: %v (type: %T)", idVal, idVal))
-			}
-			if id, ok := idVal.(float64); ok {
-				idInt := int64(id)
+			method, isServerRequest := msg["method"].(string)
+
+			if isServerRequest {
 				if c.logCallback != nil {
-					c.logCallback("LSP", fmt.Sprintf("Looking for response channel with ID=%d", idInt))
+					c.logCallback("LSP", fmt.Sprintf("Received server request: %s (ID: %v)", method, idVal))
 				}
-				c.responseMutex.Lock()
-				ch, exists := c.responses[idInt]
-				if exists {
-					if c.logCallback != nil {
-						c.logCallback("LSP", fmt.Sprintf("Found channel for ID=%d, sending response", idInt))
-					}
-					delete(c.responses, idInt)
-					c.responseMutex.Unlock()
-					ch <- msg // Send response to the goroutine waiting for it.
-				} else {
-					if c.logCallback != nil {
-						c.logCallback("LSP", fmt.Sprintf("No channel found for ID=%d", idInt))
-					}
-					c.responseMutex.Unlock()
-				}
+				// Handle server-to-client requests.
+				c.handleServerRequest(method, idVal, msg["params"])
 			} else {
 				if c.logCallback != nil {
-					c.logCallback("LSP", fmt.Sprintf("Failed to convert ID to int64: %v", idVal))
+					c.logCallback("LSP", fmt.Sprintf("Received response for ID: %v", idVal))
+				}
+
+				var idInt int64
+				validID := false
+				switch v := idVal.(type) {
+				case float64:
+					idInt = int64(v)
+					validID = true
+				case string:
+					fmt.Sscanf(v, "%d", &idInt)
+					validID = true
+				}
+
+				if validID {
+					c.responseMutex.Lock()
+					ch, exists := c.responses[idInt]
+					if exists {
+						delete(c.responses, idInt)
+						c.responseMutex.Unlock()
+						ch <- msg
+					} else {
+						if c.logCallback != nil {
+							c.logCallback("LSP", fmt.Sprintf("No channel found for ID=%d", idInt))
+						}
+						c.responseMutex.Unlock()
+					}
 				}
 			}
 		}
 
-		// If it has no "id", it's an asynchronous notification (like updated diagnostics).
+		// If it has no "id", it's an asynchronous notification.
 		if _, hasID := msg["id"]; !hasID {
 			c.handleNotification(msg)
 		}
 	}
+}
+
+// handleServerRequest responds to requests initiated by the server.
+func (c *LSPClient) handleServerRequest(method string, id interface{}, params interface{}) {
+	// For now, we provide minimal responses to keep the server happy.
+	var result interface{} = nil
+
+	if method == "workspace/configuration" {
+		// Return empty settings for any requested scope.
+		if p, ok := params.(map[string]interface{}); ok {
+			if items, ok := p["items"].([]interface{}); ok {
+				res := make([]interface{}, len(items))
+				for i := range res {
+					res[i] = map[string]interface{}{}
+				}
+				result = res
+			}
+		}
+	}
+
+	response := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  result,
+	}
+	c.sendMessage(response)
 }
 
 // handleNotification processes messages initiated by the server.
@@ -314,26 +414,88 @@ func (c *LSPClient) handleNotification(msg map[string]interface{}) {
 	}
 }
 
+// findProjectRoot looks for a project root marker like .git, compile_commands.json, or .clangd.
+func findProjectRoot(path string) string {
+	dir := filepath.Dir(path)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "compile_commands.json")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".clangd")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return filepath.Dir(path)
+}
+
 // initialize sends the initial 'initialize' request to the server.
 func (c *LSPClient) initialize() error {
-	rootURI := "file://" + filepath.Dir(c.filename)
+	rootPath := findProjectRoot(c.filename)
+	rootURI := "file://" + rootPath
 	params := map[string]interface{}{
 		"processId": os.Getpid(),
 		"rootUri":   rootURI,
+		"rootPath":  rootPath, // Deprecated but some servers still use it.
+		"workspaceFolders": []map[string]interface{}{
+			{
+				"uri":  rootURI,
+				"name": filepath.Base(rootPath),
+			},
+		},
 		"capabilities": map[string]interface{}{
 			"textDocument": map[string]interface{}{
+				"synchronization": map[string]interface{}{
+					"didSave":             true,
+					"dynamicRegistration": false,
+					"willSave":            false,
+					"willSaveWaitUntil":   false,
+				},
 				"publishDiagnostics": map[string]interface{}{},
 				"hover": map[string]interface{}{
 					"contentFormat": []string{"plaintext"},
 				},
 				"completion": map[string]interface{}{
 					"completionItem": map[string]interface{}{
-						"snippetSupport": false,
+						"snippetSupport":          false,
+						"resolveSupport":          map[string]interface{}{"properties": []string{"documentation", "detail"}},
+						"insertReplaceSupport":    true,
+						"labelDetailsSupport":     true,
+						"deprecatedSupport":       true,
+						"commitCharactersSupport": false,
 					},
+					"contextSupport": true,
 				},
+				"definition": map[string]interface{}{
+					"dynamicRegistration": false,
+					"linkSupport":         false,
+				},
+			},
+			"workspace": map[string]interface{}{
+				"configuration":    true,
+				"workspaceFolders": true,
 			},
 		},
 	}
+
+	// Move textDocumentSync to top level of capabilities if needed by some servers,
+	// though it's technically under textDocument in some versions.
+	// Actually, the spec says it should be under capabilities for server capabilities,
+	// but for client capabilities it is under textDocument.
+	// However, many servers like gopls prefer it at a certain location.
+	// Let's add it to the top level of capabilities as well just in case.
+	params["capabilities"].(map[string]interface{})["textDocumentSync"] = 1 // Full
 
 	if err := c.sendRequest("initialize", params); err != nil {
 		return err
@@ -344,7 +506,10 @@ func (c *LSPClient) initialize() error {
 
 // sendDidOpen notifies the server that a file has been opened.
 func (c *LSPClient) sendDidOpen(content string) error {
-	languageID := strings.ToLower(c.fileType.Name)
+	languageID := c.fileType.LanguageID
+	if languageID == "" {
+		languageID = strings.ToLower(c.fileType.Name)
+	}
 	params := map[string]interface{}{
 		"textDocument": map[string]interface{}{
 			"uri":        c.uri,
@@ -384,7 +549,6 @@ func (c *LSPClient) GetDiagnostics() []Diagnostic {
 
 // Definition requests the location of the definition of the symbol at cursor.
 func (c *LSPClient) Definition(line, character int) ([]Location, error) {
-	id := c.nextID()
 	params := map[string]interface{}{
 		"textDocument": map[string]interface{}{
 			"uri": c.uri,
@@ -395,54 +559,34 @@ func (c *LSPClient) Definition(line, character int) ([]Location, error) {
 		},
 	}
 
-	responseChan := make(chan map[string]interface{}, 1)
-	c.responseMutex.Lock()
-	c.responses[id] = responseChan
-	c.responseMutex.Unlock()
-
-	if err := c.sendRequestWithID(id, "textDocument/definition", params); err != nil {
-		c.responseMutex.Lock()
-		delete(c.responses, id)
-		c.responseMutex.Unlock()
+	resp, err := c.Request("textDocument/definition", params)
+	if err != nil {
 		return nil, err
 	}
 
-	select {
-	case resp := <-responseChan:
-		if err, ok := resp["error"]; ok {
-			return nil, fmt.Errorf("LSP error: %v", err)
-		}
-
-		result := resp["result"]
-		if result == nil {
-			return nil, nil
-		}
-
-		resJSON, _ := json.Marshal(result)
-
-		// Definition can return a single Location or an array of them.
-		var loc Location
-		if err := json.Unmarshal(resJSON, &loc); err == nil && loc.URI != "" {
-			return []Location{loc}, nil
-		}
-
-		var locs []Location
-		if err := json.Unmarshal(resJSON, &locs); err == nil {
-			return locs, nil
-		}
-
+	result := resp["result"]
+	if result == nil {
 		return nil, nil
-	case <-time.After(5 * time.Second):
-		c.responseMutex.Lock()
-		delete(c.responses, id)
-		c.responseMutex.Unlock()
-		return nil, fmt.Errorf("LSP request timeout")
 	}
+
+	resJSON, _ := json.Marshal(result)
+
+	// Definition can return a single Location or an array of them.
+	var loc Location
+	if err := json.Unmarshal(resJSON, &loc); err == nil && loc.URI != "" {
+		return []Location{loc}, nil
+	}
+
+	var locs []Location
+	if err := json.Unmarshal(resJSON, &locs); err == nil {
+		return locs, nil
+	}
+
+	return nil, nil
 }
 
 // Hover requests documentation information for the symbol at cursor.
 func (c *LSPClient) Hover(line, character int) (string, error) {
-	id := c.nextID()
 	params := map[string]interface{}{
 		"textDocument": map[string]interface{}{
 			"uri": c.uri,
@@ -453,82 +597,99 @@ func (c *LSPClient) Hover(line, character int) (string, error) {
 		},
 	}
 
-	responseChan := make(chan map[string]interface{}, 1)
-	c.responseMutex.Lock()
-	c.responses[id] = responseChan
-	c.responseMutex.Unlock()
-
-	if err := c.sendRequestWithID(id, "textDocument/hover", params); err != nil {
-		c.responseMutex.Lock()
-		delete(c.responses, id)
-		c.responseMutex.Unlock()
+	resp, err := c.Request("textDocument/hover", params)
+	if err != nil {
 		return "", err
 	}
 
-	select {
-	case resp := <-responseChan:
-		if err, ok := resp["error"]; ok {
-			return "", fmt.Errorf("LSP error: %v", err)
-		}
+	result := resp["result"]
+	if result == nil {
+		return "", nil
+	}
 
-		result := resp["result"]
-		if result == nil {
-			return "", nil
-		}
+	// Hover responses are complex: they can be strings, objects, or arrays.
+	resMap, ok := result.(map[string]interface{})
+	if !ok {
+		return "", nil
+	}
 
-		// Hover responses are complex: they can be strings, objects, or arrays.
-		resMap, ok := result.(map[string]interface{})
-		if !ok {
-			return "", nil
-		}
+	contents := resMap["contents"]
+	if contents == nil {
+		return "", nil
+	}
 
-		contents := resMap["contents"]
-		if contents == nil {
-			return "", nil
+	if mc, ok := contents.(map[string]interface{}); ok {
+		if val, ok := mc["value"].(string); ok {
+			return stripMarkdown(val), nil
 		}
+	}
 
-		if mc, ok := contents.(map[string]interface{}); ok {
-			if val, ok := mc["value"].(string); ok {
-				return stripMarkdown(val), nil
-			}
-		}
+	if s, ok := contents.(string); ok {
+		return stripMarkdown(s), nil
+	}
 
-		if s, ok := contents.(string); ok {
-			return stripMarkdown(s), nil
-		}
-
-		if ss, ok := contents.([]interface{}); ok {
-			var result strings.Builder
-			for i, s := range ss {
-				if str, ok := s.(string); ok {
-					result.WriteString(stripMarkdown(str))
+	if ss, ok := contents.([]interface{}); ok {
+		var result strings.Builder
+		for i, s := range ss {
+			if str, ok := s.(string); ok {
+				result.WriteString(stripMarkdown(str))
+				if i < len(ss)-1 {
+					result.WriteString("\n")
+				}
+			} else if m, ok := s.(map[string]interface{}); ok {
+				if val, ok := m["value"].(string); ok {
+					result.WriteString(stripMarkdown(val))
 					if i < len(ss)-1 {
 						result.WriteString("\n")
 					}
-				} else if m, ok := s.(map[string]interface{}); ok {
-					if val, ok := m["value"].(string); ok {
-						result.WriteString(stripMarkdown(val))
-						if i < len(ss)-1 {
-							result.WriteString("\n")
-						}
-					}
 				}
 			}
-			return strings.TrimSpace(result.String()), nil
 		}
-
-		return "", nil
-	case <-time.After(5 * time.Second):
-		c.responseMutex.Lock()
-		delete(c.responses, id)
-		c.responseMutex.Unlock()
-		return "", fmt.Errorf("LSP request timeout")
+		return strings.TrimSpace(result.String()), nil
 	}
+
+	return "", nil
+}
+
+// ResolveCompletion requests additional details for a completion item.
+func (c *LSPClient) ResolveCompletion(item CompletionItem) (CompletionItem, error) {
+	resp, err := c.Request("completionItem/resolve", item)
+	if err != nil {
+		return item, err
+	}
+
+	result := resp["result"]
+	if result == nil {
+		return item, nil
+	}
+
+	resJSON, _ := json.Marshal(result)
+	var resolvedItem CompletionItem
+	if err := json.Unmarshal(resJSON, &resolvedItem); err != nil {
+		return item, err
+	}
+
+	return resolvedItem, nil
+}
+
+// getDocumentationString extracts a plain string from the Documentation field.
+func (c *LSPClient) getDocumentationString(doc interface{}) string {
+	if doc == nil {
+		return ""
+	}
+	if s, ok := doc.(string); ok {
+		return stripMarkdown(s)
+	}
+	if m, ok := doc.(map[string]interface{}); ok {
+		if val, ok := m["value"].(string); ok {
+			return stripMarkdown(val)
+		}
+	}
+	return ""
 }
 
 // Completion requests a list of completion items for the symbol at cursor.
 func (c *LSPClient) Completion(line, character int) ([]CompletionItem, error) {
-	id := c.nextID()
 	params := map[string]interface{}{
 		"textDocument": map[string]interface{}{
 			"uri": c.uri,
@@ -537,61 +698,36 @@ func (c *LSPClient) Completion(line, character int) ([]CompletionItem, error) {
 			"line":      line,
 			"character": character,
 		},
+		"context": map[string]interface{}{
+			"triggerKind": 1, // Invited
+		},
 	}
 
-	if c.logCallback != nil {
-		c.logCallback("LSP", fmt.Sprintf("Requesting completion at %d:%d (ID=%d)", line, character, id))
-	}
-
-	responseChan := make(chan map[string]interface{}, 1)
-	c.responseMutex.Lock()
-	c.responses[id] = responseChan
-	c.responseMutex.Unlock()
-
-	if err := c.sendRequestWithID(id, "textDocument/completion", params); err != nil {
-		c.responseMutex.Lock()
-		delete(c.responses, id)
-		c.responseMutex.Unlock()
+	resp, err := c.Request("textDocument/completion", params)
+	if err != nil {
 		return nil, err
 	}
 
-	select {
-	case resp := <-responseChan:
-		if c.logCallback != nil {
-			c.logCallback("LSP", fmt.Sprintf("Received completion response (ID=%d)", id))
-		}
-		if err, ok := resp["error"]; ok {
-			return nil, fmt.Errorf("LSP error: %v", err)
-		}
-
-		result := resp["result"]
-		if result == nil {
-			return nil, nil
-		}
-
-		resJSON, _ := json.Marshal(result)
-
-		// Completion can return a CompletionList or an array of CompletionItems.
-		var compList CompletionList
-		if err := json.Unmarshal(resJSON, &compList); err == nil {
-			return compList.Items, nil
-		}
-
-		var compItems []CompletionItem
-		if err := json.Unmarshal(resJSON, &compItems); err == nil {
-			return compItems, nil
-		}
-
+	result := resp["result"]
+	if result == nil {
 		return nil, nil
-	case <-time.After(10 * time.Second):
-		if c.logCallback != nil {
-			c.logCallback("LSP", fmt.Sprintf("Completion request timed out (ID=%d)", id))
-		}
-		c.responseMutex.Lock()
-		delete(c.responses, id)
-		c.responseMutex.Unlock()
-		return nil, fmt.Errorf("LSP request timeout")
 	}
+
+	resJSON, _ := json.Marshal(result)
+
+	// Completion can return a CompletionList or an array of CompletionItems.
+	// Try unmarshaling into array of items first as it's more direct.
+	var compItems []CompletionItem
+	if err := json.Unmarshal(resJSON, &compItems); err == nil && compItems != nil {
+		return compItems, nil
+	}
+
+	var compList CompletionList
+	if err := json.Unmarshal(resJSON, &compList); err == nil {
+		return compList.Items, nil
+	}
+
+	return nil, nil
 }
 
 // sendRequestWithID helper to send a request with a pre-generated ID.
