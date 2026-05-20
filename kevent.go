@@ -239,6 +239,10 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 		e.mode = ModeVisualBlock
 	case termbox.KeyCtrlK:
 		e.triggerHover()
+	case termbox.KeyCtrlA:
+		e.ModifyNumberUnderCursor(1)
+	case termbox.KeyCtrlZ:
+		e.ModifyNumberUnderCursor(-1)
 	}
 
 	// Prevent key event fallthrough.

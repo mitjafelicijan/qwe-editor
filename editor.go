@@ -1625,6 +1625,152 @@ func (e *Editor) getWordUnderCursor() string {
 	return string(line[start:end])
 }
 
+func (e *Editor) ModifyNumberUnderCursor(delta int) {
+	b := e.activeBuffer()
+	if b == nil || b.readOnly {
+		return
+	}
+
+	e.saveState()
+	cursors := e.getSortedCursorsDesc()
+	modified := false
+
+	for _, c := range cursors {
+		if c.Y >= len(b.buffer) {
+			continue
+		}
+		line := b.buffer[c.Y]
+		if len(line) == 0 {
+			continue
+		}
+
+		x := c.X
+		if x >= len(line) {
+			x = len(line) - 1
+		}
+
+		isDigit := func(r rune) bool { return r >= '0' && r <= '9' }
+
+		// Helper to check if there is a valid number at or around a given position
+		checkAt := func(pos int) (int, int) {
+			if pos < 0 || pos >= len(line) {
+				return -1, -1
+			}
+			// Case 1: Position is on a word character.
+			if e.isWordChar(line[pos]) {
+				wStart := pos
+				for wStart > 0 && e.isWordChar(line[wStart-1]) {
+					wStart--
+				}
+				wEnd := pos
+				for wEnd < len(line) && e.isWordChar(line[wEnd]) {
+					wEnd++
+				}
+
+				// Check if the entire word is digits.
+				allDigits := true
+				for i := wStart; i < wEnd; i++ {
+					if !isDigit(line[i]) {
+						allDigits = false
+						break
+					}
+				}
+
+				if allDigits {
+					s := wStart
+					en := wEnd
+					// Check for leading minus sign.
+					if s > 0 && line[s-1] == '-' {
+						// Ensure the minus isn't preceded by another word character.
+						if s == 1 || !e.isWordChar(line[s-2]) {
+							s--
+						}
+					}
+					return s, en
+				}
+			} else if line[pos] == '-' && pos+1 < len(line) && isDigit(line[pos+1]) {
+				// Case 2: Position is on a minus sign followed by a digit.
+				wStart := pos + 1
+				wEnd := pos + 1
+				for wEnd < len(line) && e.isWordChar(line[wEnd]) {
+					wEnd++
+				}
+
+				// Check if the word following the minus sign is all digits.
+				allDigits := true
+				for i := wStart; i < wEnd; i++ {
+					if !isDigit(line[i]) {
+						allDigits = false
+						break
+					}
+				}
+
+				if allDigits {
+					return pos, wEnd
+				}
+			}
+			return -1, -1
+		}
+
+		start := -1
+		end := -1
+
+		// 1. Check if there's a number at the current cursor position.
+		start, end = checkAt(x)
+
+		// 2. If not, search forward on the current line.
+		if start == -1 {
+			for i := x + 1; i < len(line); i++ {
+				// Optimization: only check if it looks like a number start.
+				if isDigit(line[i]) || (line[i] == '-' && i+1 < len(line) && isDigit(line[i+1])) {
+					start, end = checkAt(i)
+					if start != -1 {
+						break
+					}
+				}
+			}
+		}
+
+		if start == -1 {
+			continue
+		}
+
+		numStr := string(line[start:end])
+		val, err := strconv.Atoi(numStr)
+		if err != nil {
+			continue
+		}
+
+		newVal := val + delta
+		newStr := strconv.Itoa(newVal)
+		newRunes := []rune(newStr)
+
+		// Replace the number in the buffer.
+		newLine := append(line[:start], append(newRunes, line[end:]...)...)
+		b.buffer[c.Y] = newLine
+
+		// Handle syntax update.
+		if b.syntax != nil {
+			deletedBytes := uint32(len(string(line[start:end])))
+			addedBytes := uint32(len(string(newRunes)))
+			oldColBytes := b.getLineByteOffset(line, start)
+			newColBytes := b.getLineByteOffset(newLine, start)
+			b.handleEdit(c.Y, start, deletedBytes, addedBytes, c.Y, oldColBytes+deletedBytes, c.Y, newColBytes+addedBytes)
+		}
+
+		// Keep cursor on the number (at its start).
+		c.X = start
+		modified = true
+	}
+
+	if modified {
+		if b.syntax != nil {
+			b.syntax.Reparse([]byte(b.toString()))
+		}
+		e.markModified()
+	}
+}
+
 func (e *Editor) isPathChar(r rune) bool {
 	return e.isWordChar(r) || r == '/' || r == '.' || r == '-' || r == '_' || r == '~' || r == '\\' || r == ':'
 }
