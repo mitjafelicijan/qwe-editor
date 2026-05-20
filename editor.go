@@ -2066,6 +2066,70 @@ func (e *Editor) gotoDefinition() {
 	e.centerCursor()
 }
 
+func (e *Editor) gotoImplementation() {
+	b := e.activeBuffer()
+	if b == nil || b.lspClient == nil {
+		return
+	}
+
+	e.pushJump()
+
+	// Sync buffer content with LSP server before requesting implementation.
+	b.lspClient.SendDidChange(b.toString())
+
+	locs, err := b.lspClient.Implementation(b.PrimaryCursor().Y, b.PrimaryCursor().X)
+	if err != nil {
+		e.addLog("Editor", fmt.Sprintf("gotoImplementation error: %v", err))
+		return
+	}
+
+	if len(locs) == 0 {
+		e.addLog("Editor", "gotoImplementation: No implementation found")
+		return
+	}
+
+	loc := locs[0]
+	targetPath := strings.TrimPrefix(loc.URI, "file://")
+
+	// Find if buffer is already open
+	found := false
+	for i, buf := range e.buffers {
+		absT, _ := filepath.Abs(targetPath)
+		absB, _ := filepath.Abs(buf.filename)
+		if absT == absB {
+			e.activeBufferIndex = i
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		if err := e.LoadFile(targetPath); err != nil {
+			e.addLog("Editor", fmt.Sprintf("gotoImplementation: Failed to load %s: %v", targetPath, err))
+			return
+		}
+	}
+
+	b = e.activeBuffer()
+	b.PrimaryCursor().Y = loc.Range.Start.Line
+	b.PrimaryCursor().X = loc.Range.Start.Character
+
+	// Ensure cursor is within bounds
+	if b.PrimaryCursor().Y < 0 {
+		b.PrimaryCursor().Y = 0
+	}
+	if b.PrimaryCursor().Y >= len(b.buffer) {
+		b.PrimaryCursor().Y = len(b.buffer) - 1
+	}
+	if b.PrimaryCursor().X < 0 {
+		b.PrimaryCursor().X = 0
+	}
+	if b.PrimaryCursor().X > len(b.buffer[b.PrimaryCursor().Y]) {
+		b.PrimaryCursor().X = len(b.buffer[b.PrimaryCursor().Y])
+	}
+	e.centerCursor()
+}
+
 func (e *Editor) pushJump() {
 	b := e.activeBuffer()
 	if b == nil {

@@ -481,6 +481,10 @@ func (c *LSPClient) initialize() error {
 					"dynamicRegistration": false,
 					"linkSupport":         false,
 				},
+				"implementation": map[string]interface{}{
+					"dynamicRegistration": false,
+					"linkSupport":         false,
+				},
 			},
 			"workspace": map[string]interface{}{
 				"configuration":    true,
@@ -572,6 +576,44 @@ func (c *LSPClient) Definition(line, character int) ([]Location, error) {
 	resJSON, _ := json.Marshal(result)
 
 	// Definition can return a single Location or an array of them.
+	var loc Location
+	if err := json.Unmarshal(resJSON, &loc); err == nil && loc.URI != "" {
+		return []Location{loc}, nil
+	}
+
+	var locs []Location
+	if err := json.Unmarshal(resJSON, &locs); err == nil {
+		return locs, nil
+	}
+
+	return nil, nil
+}
+
+// Implementation requests the location of the implementation of the symbol at cursor.
+func (c *LSPClient) Implementation(line, character int) ([]Location, error) {
+	params := map[string]interface{}{
+		"textDocument": map[string]interface{}{
+			"uri": c.uri,
+		},
+		"position": map[string]interface{}{
+			"line":      line,
+			"character": character,
+		},
+	}
+
+	resp, err := c.Request("textDocument/implementation", params)
+	if err != nil {
+		return nil, err
+	}
+
+	result := resp["result"]
+	if result == nil {
+		return nil, nil
+	}
+
+	resJSON, _ := json.Marshal(result)
+
+	// Implementation can return a single Location or an array of them.
 	var loc Location
 	if err := json.Unmarshal(resJSON, &loc); err == nil && loc.URI != "" {
 		return []Location{loc}, nil

@@ -291,9 +291,14 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 
 	switch ev.Ch {
 	case 'i':
-		e.saveState()
-		e.mode = ModeInsert
-		e.introDismissed = true
+		if e.pendingKey == 'g' {
+			e.gotoImplementation()
+			e.pendingKey = 0
+		} else {
+			e.saveState()
+			e.mode = ModeInsert
+			e.introDismissed = true
+		}
 	case 'a':
 		e.saveState()
 		e.moveCursor(1, 0)
