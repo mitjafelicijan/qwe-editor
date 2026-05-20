@@ -243,6 +243,41 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 		e.ModifyNumberUnderCursor(1)
 	case termbox.KeyCtrlZ:
 		e.ModifyNumberUnderCursor(-1)
+	case termbox.KeyF1:
+		if e.pendingKey == Config.LeaderKey {
+			e.SetBookmark(0)
+			e.pendingKey = 0
+		} else {
+			e.GotoBookmark(0)
+		}
+	case termbox.KeyF2:
+		if e.pendingKey == Config.LeaderKey {
+			e.SetBookmark(1)
+			e.pendingKey = 0
+		} else {
+			e.GotoBookmark(1)
+		}
+	case termbox.KeyF3:
+		if e.pendingKey == Config.LeaderKey {
+			e.SetBookmark(2)
+			e.pendingKey = 0
+		} else {
+			e.GotoBookmark(2)
+		}
+	case termbox.KeyF4:
+		if e.pendingKey == Config.LeaderKey {
+			e.SetBookmark(3)
+			e.pendingKey = 0
+		} else {
+			e.GotoBookmark(3)
+		}
+	case termbox.KeyF5:
+		if e.pendingKey == Config.LeaderKey {
+			e.SetBookmark(4)
+			e.pendingKey = 0
+		} else {
+			e.GotoBookmark(4)
+		}
 	}
 
 	// Prevent key event fallthrough.
@@ -535,6 +570,11 @@ func (e *Editor) handleNormalMode(ev termbox.Event) {
 	case 'b':
 		if e.pendingKey == Config.LeaderKey {
 			e.startBufferFuzzyFinder()
+			e.pendingKey = 0
+		}
+	case 'm':
+		if e.pendingKey == Config.LeaderKey {
+			e.startBookmarkFuzzyFinder()
 			e.pendingKey = 0
 		}
 	case 'P':

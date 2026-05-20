@@ -53,6 +53,7 @@ const (
 	ColorFuzzyModeBuffers   // Indicator that fuzzy finder is searching buffers.
 	ColorFuzzyModeFiles     // Indicator that fuzzy finder is searching files.
 	ColorFuzzyModeWarnings  // Indicator that fuzzy finder is searching diagnostics.
+	ColorFuzzyModeBookmarks // Indicator that fuzzy finder is searching bookmarks.
 
 	// Colors for Tree-sitter syntax highlighting.
 	ColorTSFunction
@@ -110,11 +111,12 @@ var Theme = map[ColorName]Color{
 	ColorGutterSignInfo:    {Background: termbox.Attribute(221), Foreground: termbox.Attribute(1)},
 	ColorGutterSignHint:    {Background: termbox.Attribute(221), Foreground: termbox.Attribute(1)},
 
-	ColorFuzzyResult:       {Background: termbox.ColorDefault, Foreground: termbox.Attribute(254)},
-	ColorFuzzySelected:     {Background: termbox.Attribute(236), Foreground: termbox.Attribute(254)},
-	ColorFuzzyModeBuffers:  {Background: termbox.Attribute(125), Foreground: termbox.Attribute(255)},
-	ColorFuzzyModeFiles:    {Background: termbox.Attribute(125), Foreground: termbox.Attribute(255)},
-	ColorFuzzyModeWarnings: {Background: termbox.Attribute(33), Foreground: termbox.Attribute(255)},
+	ColorFuzzyResult:        {Background: termbox.ColorDefault, Foreground: termbox.Attribute(254)},
+	ColorFuzzySelected:      {Background: termbox.Attribute(236), Foreground: termbox.Attribute(254)},
+	ColorFuzzyModeBuffers:   {Background: termbox.Attribute(125), Foreground: termbox.Attribute(255)},
+	ColorFuzzyModeFiles:     {Background: termbox.Attribute(125), Foreground: termbox.Attribute(255)},
+	ColorFuzzyModeWarnings:  {Background: termbox.Attribute(33), Foreground: termbox.Attribute(255)},
+	ColorFuzzyModeBookmarks: {Background: termbox.Attribute(93), Foreground: termbox.Attribute(255)},
 
 	ColorEmptyLineMarker: {Background: termbox.ColorDefault, Foreground: termbox.Attribute(244)},
 

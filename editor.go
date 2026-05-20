@@ -43,6 +43,7 @@ const (
 	FuzzyModeFile FuzzyType = iota
 	FuzzyModeBuffer
 	FuzzyModeWarning
+	FuzzyModeBookmark
 )
 
 type Jump struct {
@@ -60,6 +61,7 @@ type DiagnosticItem struct {
 }
 
 // MatchRange represents a span of text matched by search or replace.
+
 type MatchRange struct {
 	startLine int
 	startCol  int
@@ -89,6 +91,7 @@ type Editor struct {
 	fuzzyCandidates    []string         // Raw list of all possible items (files/buffers/etc.).
 	fuzzyType          FuzzyType        // What the fuzzy finder is searching for.
 	fuzzyDiagnostics   []DiagnosticItem // Diagnostics from all buffers (accessible via finder).
+	bookmarks          [5]*Jump         // Quick bookmarks (F1-F5).
 	mouseEnabled       bool             // Toggle for mouse support.
 	visualStartX       int              // Starting anchor for visual selection.
 	visualStartY       int              // Starting anchor for visual selection.
@@ -237,6 +240,7 @@ func NewEditor(devMode bool) *Editor {
 		showDebugLog:      false,
 		jumplist:          []Jump{},
 		jumpIndex:         -1,
+		bookmarks:         [5]*Jump{},
 		devMode:           devMode,
 		ollamaClient:      NewOllamaClient(),
 	}
@@ -722,6 +726,84 @@ func (e *Editor) startWarningsFuzzyFinder() {
 	e.mode = ModeFuzzy
 }
 
+func (e *Editor) SetBookmark(index int) {
+	if index < 0 || index >= len(e.bookmarks) {
+		return
+	}
+	b := e.activeBuffer()
+	if b == nil {
+		return
+	}
+	e.bookmarks[index] = &Jump{
+		filename: b.filename,
+	}
+	e.message = fmt.Sprintf("Bookmark F%d set", index+1)
+}
+
+func (e *Editor) GotoBookmark(index int) {
+	if index < 0 || index >= len(e.bookmarks) {
+		return
+	}
+	bookmark := e.bookmarks[index]
+	if bookmark == nil {
+		e.message = fmt.Sprintf("Bookmark F%d not set", index+1)
+		return
+	}
+
+	// Find if buffer is already open
+	bufferIndex := -1
+	for i, b := range e.buffers {
+		if b.filename == bookmark.filename {
+			bufferIndex = i
+			break
+		}
+	}
+
+	// If buffer not found, try to load it
+	if bufferIndex == -1 && bookmark.filename != "" {
+		err := e.LoadFile(bookmark.filename)
+		if err == nil {
+			bufferIndex = e.activeBufferIndex
+		}
+	}
+
+	if bufferIndex != -1 {
+		e.activeBufferIndex = bufferIndex
+		e.centerScreen()
+		e.mode = ModeNormal
+	} else if bookmark.filename == "" {
+		// Maybe it was an empty [No Name] buffer
+		e.message = fmt.Sprintf("Bookmark F%d: switching to [No Name] buffer", index+1)
+		// We already found the first empty buffer if it exists.
+	} else {
+		e.message = fmt.Sprintf("Could not open bookmarked file: %s", bookmark.filename)
+	}
+}
+
+func (e *Editor) startBookmarkFuzzyFinder() {
+	e.fuzzyCandidates = []string{}
+
+	for i, bookmark := range e.bookmarks {
+		if bookmark == nil {
+			e.fuzzyCandidates = append(e.fuzzyCandidates, fmt.Sprintf("F%d: [Not Set]", i+1))
+			continue
+		}
+		filename := bookmark.filename
+		if filename == "" {
+			filename = "[No Name]"
+		} else {
+			filename = filepath.Base(filename)
+		}
+		e.fuzzyCandidates = append(e.fuzzyCandidates, fmt.Sprintf("F%d: %s", i+1, filename))
+	}
+
+	e.fuzzyBuffer = []rune{}
+	e.fuzzyIndex = 0
+	e.fuzzyType = FuzzyModeBookmark
+	e.updateFuzzyResults()
+	e.mode = ModeFuzzy
+}
+
 func fuzzyMatch(query, target string) (int, bool) {
 	if query == "" {
 		return 0, true
@@ -890,6 +972,14 @@ func (e *Editor) openSelectedFile() {
 			}
 			e.mode = ModeNormal
 		}
+	} else if e.fuzzyType == FuzzyModeBookmark {
+		if e.fuzzyIndex >= len(e.fuzzyResults) || e.fuzzyIndex >= len(e.fuzzyResultIndices) {
+			return
+		}
+		// In startBookmarkFuzzyFinder, we didn't filter, so indices match results
+		// but if we did filter, e.fuzzyResultIndices would hold the original bookmark index
+		bookmarkIdx := e.fuzzyResultIndices[e.fuzzyIndex]
+		e.GotoBookmark(bookmarkIdx)
 	}
 }
 
@@ -3995,6 +4085,9 @@ func (e *Editor) drawStatusBar(statusY int) {
 		case FuzzyModeWarning:
 			modeStr = "WARNINGS"
 			fg, bg = GetThemeColor(ColorFuzzyModeWarnings)
+		case FuzzyModeBookmark:
+			modeStr = "BOOKMARKS"
+			fg, bg = GetThemeColor(ColorFuzzyModeBookmarks)
 		default:
 			modeStr = "FUZZY"
 			fg, bg = GetThemeColor(ColorNormalMode)
